@@ -28,14 +28,39 @@ module SessionMonad where
 --       * admin deletes/disables a user account permanently (is such a thing a thing?)
 --
 
-class Monad m => SessionMonad m where
-  type Session m
+class Monad m => AuthenticatedUserSession m where
+  type Request m -- the sort of requests the type of session has
+  type Response m -- the sort of responses we send to the user
+
+  -- When we want to do something as a user within the user's session
+  getSession :: m (Session m)
+  setSession :: (Session m) -> m ()
+
+  -- Users should have access to getting and setting their session key... to some degree
+  -- renewing should probably have a default implementation based on get and set
+  renewSessionKey :: m (SessionKey m)
+  getSessionKey :: m (SessionKey m)
+  setSessionKey :: m (SessionKey m) -> m ()
+  getUser :: m (SessionUser m)
+  -- The universal logging hook
+  getUserRequest :: m (Request m)
+  sendUserResponse :: m (Response m)
+  logSession :: Show logMsg => logMsg -> logLevel -> m ()
+  -- Users can logout
+  exitSession :: m ()
+
+
+class Monad m => SessionManager m where
+  type UserSession (Session m) => Session m
   type SessionCredentials m
   type SessionKey m
   type SessionUser m
 
   -- The only way to start a session should be to authenticate
   -- if a session exists, creating a session should be short-circuited
+
+  genSessionKey :: m (SessionKey m)
+
   startAuthenticateUserSession :: SessionCredentials m -> m (Session m)
 
   -- We may want to look up a session
