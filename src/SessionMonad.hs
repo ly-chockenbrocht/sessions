@@ -28,7 +28,7 @@ module SessionMonad where
 --       * admin deletes/disables a user account permanently (is such a thing a thing?)
 --
 
-class Monad m => AuthenticatedUserSession m where
+class SessionManager m => AuthenticatedUserSession m where
   type Request m -- the sort of requests the type of session has
   type Response m -- the sort of responses we send to the user
 
@@ -44,10 +44,12 @@ class Monad m => AuthenticatedUserSession m where
   getUser :: m (SessionUser m)
   -- The universal logging hook
   getUserRequest :: m (Request m)
-  sendUserResponse :: m (Response m)
+  sendUserMessage :: m (Response m)
   logSession :: Show logMsg => logMsg -> logLevel -> m ()
+
   -- Users can logout
   exitSession :: m ()
+  exitSession = getSession >>= terminateSession
 
 
 class Monad m => SessionManager m where
@@ -60,6 +62,8 @@ class Monad m => SessionManager m where
   -- if a session exists, creating a session should be short-circuited
 
   genSessionKey :: m (SessionKey m)
+
+  setKeyForSession :: SessionKey m -> SessionKey m -> m ()
 
   startAuthenticateUserSession :: SessionCredentials m -> m (Session m)
 

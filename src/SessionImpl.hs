@@ -1,19 +1,18 @@
 module SessionImpl where
 
 
-data RequestImpl = PrintString String | PringInt Int
+data RequestImpl = PrintString String | Authorize String | Disconnect | Renew deriving Show
+newtype ResponseImpl = ResponseString String | SessionKey |
 
 type PSessionT m a = ReaderT (TVar SessionImpl) m a deriving (Monad)
 
-runSession = runStateT
-
-instance SessionManager m => AuthenticatedUserSession (PSessionT m) where
-  type Request m = -- the sort of requests the type of session has
-  type Response m -- the sort of responses we send to the user
+instance MonadIO m => AuthenticatedUserSession (PSessionT m) where
+  type Request m = RequestImpl -- the sort of requests the type of session has
+  type Response m = ResponseImpl -- the sort of responses we send to the user
 
   -- When we want to do something as a user within the user's session
   --withSession :: SessionImpl -> PSessionT m a -> m ()
-  withSession = undefined
+  -- withSession = undefined
 
   -- Users should have access to getting and setting their session key... to some degree
   -- renewing should probably have a default implementation based on get and set
@@ -27,49 +26,61 @@ instance SessionManager m => AuthenticatedUserSession (PSessionT m) where
     lift . atomically $ writeTVar sessionVar session
 
   --renewSessionKey :: PSessionT m SessionKeyImpl
-  renewSessionKey = setSessionKey =<< lift genSessionKey
+  renewSessionKey = setSessionKey =<< genSessionKey
 
   --getSessionKey :: PSessionT m SessionKeyImpl
-  getSessionKey = do
-    Session{..} <- getSession
-    pure sessionKey
+  getSessionKey = sessionKey <$> getSession
 
   --setSessionKey :: SessionKeyImpl -> PSessionT m ()
   setSessionKey newKey = do
     session <- getSession
-    updatedSession = session{ sessionKey = newKey }
+    let updatedSession = session{ sessionKey = newKey }
     setSession updatedSession
+    setKeyForSession (sessionKey session) newKey
     pure newKey
 
   --getUser :: PSessionT m SessionUserImpl
-  getUser = do
-    Session{..} <- getSession
-    pure sessionUser
+  getUser = sessionUser =<< getSession
 
-  -- The universal logging hook
   --getUserRequest :: PSessionT m RequestImpl
   getUserRequest = undefined
 
-  --sendUserResponse :: PSessionT m ResponseImpl
-  sendUserResponse = undefined
+  --sendUserMessage :: PSessionT m ResponseImpl
+  sendUserMessage = undefined
 
+  -- The universal logging hook
   --logSession :: logMsg -> logLevel -> PSessionT m ()
-  logSession = undefined
+  logSession msg _ = lift $ print $ "SERVER: " ++ msg
 
   -- Users can logout
   -- exitSession :: PSessionT m ()
-  exitSession = undefined
+  exitSession = getSession <* print "SERVER: Killing session" >>= terminateSession
 
 
 
-type PSessionManagerT m a = StateT SessionRecords m a deriving (Monad)
+newtype PSessionManagerT m a = PSessionManagerT (ReaderT SessionRecords m a) deriving (Monad)
 
-data SessionRecords = SessionRecords { sessions :: Map SessionKeyImpl (TVar SessionImpl), sessionCount :: Int }
+runSessionManager action = do
+  sessionRecords <- initSessionRecords
+  runReaderT action sessionrecords
+
+initSessionRecords = do
+  sessions <- newIORef Map.empty
+  let sessionCount = 0
+  sessionMsgStack
+  SessionRecords sessions sessionCount sessionReqStack
+
+data SessionRecords
+  = SessionRecords
+    { sessions :: IORef (Map SessionKeyImpl (TVar SessionImpl))
+    , sessionCount :: Int
+    }
 
 data SessionImpl =
   SessionImpl
     { sessionKey :: SessionKeyImpl
     , sessionUser :: SessionUserImpl
+    , sessionMessageQueue :: [ResponseImpl]
     -- , sessionStartTime :: String
     }
 
@@ -79,31 +90,29 @@ newtype SessionUserImpl = SessionUserImpl { username :: String }
 
 newtype SessionKeyImpl = SessionKeyImpl { getSessionKey :: Int }
 
-instance Monad m=> SessionManager (PSessionManagerT m) where
+instance Monad m => SessionManager (PSessionManagerT m) where
   type Session (PSessionManagerT m) = SessionImpl
   type SessionCredentials (PSessionManagerT m) = SessionCredentialsImpl
   type SessionKey (PSessionManagerT m) = SessionKeyImpl
   type SesssionUser (PSessionManagerT m) = SessionUserImpl
 
-  -- startAuthenticationUserSession :: SessionCredentialsImpl -> ProtoSession SessionImpl
+  -- startAuthenticationUserSession :: SessionCredentialsImpl -> PSessionManagerT SessionImpl
   startAuthenticationUserSession SessionCredentialsImpl{..} = openSession credentialsUsername
 
-  -- retrieveSession :: SessionKeyImpl -> ProtoSession (Maybe SessionImpl)
+  -- retrieveSession :: SessionKeyImpl -> PSessionManagerT (Maybe SessionImpl)
   retrieveSession sessionKey = do
     SessionRecords{..} <- ask
-    case Map.lookup sessions sessionKey of
-      Just s -> pure s
-      Nothing -> error "real exception in production"
+    pure $ Map.lookup sessions sessionKey
 
-  ---- retrieveSessionUser :: SessionUserImpl -> ProtoSession SessionImpl
+  ---- retrieveSessionUser :: SessionUserImpl -> PSessionManagerT SessionImpl
   --retrieveSessionUser SessionUserImpl{..} = undefined
 
-  -- retrieveSessions :: ProtoSession [SessionImpl]
+  -- retrieveSessions :: PSessionManagerT [SessionImpl]
   retrieveSessions = do
     SessionRecords{..} <- ask
     pure $ map snd (Map.toList sessions)
 
-  -- terminateSession :: SessionImpl -> ProtoSession ()
+  -- terminateSession :: SessionImpl -> PSessionManagerT ()
   terminateSession SessionImpl{..} = removeSession
 
 openSession :: String -> PSessionManagerT SessionKeyImpl
