@@ -1,8 +1,37 @@
 module SessionImpl where
 
 
-data RequestImpl = PrintString String | Authorize String | Disconnect | Renew deriving Show
-newtype ResponseImpl = ResponseString String | SessionKey |
+data RequestImpl
+  = PrintString String
+  | Authorize String
+  | Reopen SessionKeyImpl
+  | Disconnect
+  | Terminate
+  | Renew
+  | ListSessions
+  | KickUser String
+  deriving Show
+
+newtype ResponseImpl
+  = ResponseString String
+  | SessionKey SessionKeyImpl
+  | SessionsList [SessionsImpl]
+  | Banned
+
+data SessionImpl =
+  SessionImpl
+    { sessionKey :: SessionKeyImpl
+    , sessionUser :: SessionUserImpl
+    , sessionMessageQueue :: [ResponseImpl]
+    -- , sessionStartTime :: String
+    }
+
+newtype SessionCredentialsImpl = SessionCredentialsImpl { credentialsUsername :: String }
+
+newtype SessionUserImpl = SessionUserImpl { username :: String }
+
+newtype SessionKeyImpl = SessionKeyImpl { getSessionKey :: Int }
+
 
 type PSessionT m a = ReaderT (TVar SessionImpl) m a deriving (Monad)
 
@@ -18,7 +47,6 @@ instance MonadIO m => AuthenticatedUserSession (PSessionT m) where
   -- renewing should probably have a default implementation based on get and set
 
   getSession = lift . atomically . readTVar <=< ask
-
 
   -- setSession :: SessionImpl -> PSessionT m ()
   setSession session = do
@@ -53,8 +81,11 @@ instance MonadIO m => AuthenticatedUserSession (PSessionT m) where
   logSession msg _ = lift $ print $ "SERVER: " ++ msg
 
   -- Users can logout
-  -- exitSession :: PSessionT m ()
-  exitSession = getSession <* print "SERVER: Killing session" >>= terminateSession
+
+  disconnect session = session{ sessionConnection = None }
+
+  -- endSession :: PSessionT m ()
+  endSession = getSession <* print "SERVER: Killing session" >>= terminateSession
 
 
 
@@ -75,20 +106,6 @@ data SessionRecords
     { sessions :: IORef (Map SessionKeyImpl (TVar SessionImpl))
     , sessionCount :: Int
     }
-
-data SessionImpl =
-  SessionImpl
-    { sessionKey :: SessionKeyImpl
-    , sessionUser :: SessionUserImpl
-    , sessionMessageQueue :: [ResponseImpl]
-    -- , sessionStartTime :: String
-    }
-
-newtype SessionCredentialsImpl = SessionCredentialsImpl { credentialsUsername :: String }
-
-newtype SessionUserImpl = SessionUserImpl { username :: String }
-
-newtype SessionKeyImpl = SessionKeyImpl { getSessionKey :: Int }
 
 instance Monad m => SessionManager (PSessionManagerT m) where
   type Session (PSessionManagerT m) = SessionImpl
